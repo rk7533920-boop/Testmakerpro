@@ -1,0 +1,16 @@
+{
+  "id": "./",
+  "name": "Test Maker",
+  "short_name": "Test Maker",
+  "description": "Build, practise and review tests from your own questions.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f4ee",
+  "theme_color": "#26324a",
+  "icons": [
+    { "src": "icon.png", "sizes": "192x192 512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon.png", "sizes": "192x192 512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

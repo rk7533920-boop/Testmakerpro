@@ -629,6 +629,8 @@ body[data-tab="test"]:not(.t-run):not(.t-res) #smartWrap{display:block;}
     <div class="grp-h">Help</div>
     <button class="lrow" onclick="showInfo('starttest')"><span>How Test Maker works</span><span class="chev">›</span></button>
     <button class="lrow danger" onclick="deleteAllFromSettings()">Delete all my questions</button>
+    <div class="grp-h" id="labGrp" style="display:none;">Parser lab</div>
+    <button class="lrow" id="labRow" style="display:none;" onclick="switchTab('admin')"><span>Teach the parser<small id="labRowSub">Add a book / review what students sent</small></span><span class="chev">›</span></button>
   </section>
 
   <section id="screen-bank" class="screen">
@@ -854,6 +856,38 @@ Ans. (b)
       <div class="row" style="justify-content:space-between;align-items:center;"><h3 style="margin:0;">By subject</h3><button class="info-btn" onclick="showInfo('history')">i</button></div>
       <div id="historyList"><p class="empty">No attempts yet.</p></div>
     </div>
+
+  <section id="screen-admin" class="screen">
+    <div class="sc-head"><button class="back" onclick="switchTab('settings')" aria-label="Back">‹</button><h2>Parser lab</h2></div>
+    <p class="muted" style="margin:0 0 12px;font-size:12.5px;line-height:1.5;">Every book prints its questions differently. Analyse a PDF here once and the app works out that book's layout for everyone. Nothing reaches students until you publish it.</p>
+
+    <div class="card">
+      <div style="font-weight:700;font-size:14px;margin-bottom:8px;">1 · Teach the parser a book</div>
+      <div class="row" style="justify-content:flex-start;gap:8px;flex-wrap:wrap;">
+        <button class="secondary" id="labPickBtn" onclick="document.getElementById('labPdf').click()">Choose PDF</button>
+        <input type="file" id="labPdf" accept="application/pdf" style="display:none;" onchange="labPickPdf(event)">
+        <span id="labFile" class="muted" style="font-size:12px;"></span>
+      </div>
+      <div class="row" style="justify-content:flex-start;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;">
+        <span class="muted" style="font-size:12px;">Pages</span>
+        <input type="number" id="labFrom" class="num-input" min="1" inputmode="numeric" placeholder="From">
+        <input type="number" id="labTo" class="num-input" min="1" inputmode="numeric" placeholder="To">
+        <button class="primary" id="labGo" onclick="labAnalyse()" disabled>Analyse</button>
+      </div>
+      <p class="muted" style="font-size:11px;margin:8px 0 0;line-height:1.5;">Pick up to 100 pages that contain questions <b>and</b> their answers. The app works out the layout, shows you exactly what it found, and only lets you publish it when every question came out complete.</p>
+      <div id="labResult"></div>
+    </div>
+
+    <div class="grp-h" style="margin-top:16px;">2 · Library</div>
+    <div class="row" style="justify-content:flex-start;gap:8px;flex-wrap:wrap;">
+      <button class="secondary" onclick="labTab('queue')">Waiting for you <span id="labQueueN" class="chip">0</span></button>
+      <button class="secondary" onclick="labTab('library')">Known books <span id="libN" class="chip">0</span></button>
+      <button class="secondary" onclick="labRegression()">Run regression</button>
+      <button class="secondary" onclick="labSync()">Refresh</button>
+    </div>
+    <div id="labBody" style="margin-top:10px;"><p class="empty">Tap Refresh to load the library.</p></div>
+  </section>
+
   </section>
 
 </div>
@@ -1658,7 +1692,7 @@ document.addEventListener('visibilitychange',()=>{ if(!document.hidden) setTimeo
 window.addEventListener('focus',()=>setTimeout(ensureKeys,60));
 window.addEventListener('pageshow',()=>setTimeout(ensureKeys,60));
 function switchTab(name){
-  ['home','bank','test','history','profile','settings'].forEach(n=>{
+  ['home','bank','test','history','profile','settings','admin'].forEach(n=>{
     const sc=document.getElementById('screen-'+n); if(sc) sc.classList.toggle('active', n===name);
     const tb=document.getElementById('tabbtn-'+n); if(tb) tb.classList.toggle('active', n===name || (n==='home' && (name==='profile'||name==='settings')));
   });
@@ -2318,16 +2352,18 @@ function stripPreamble(t){ const m=/DO\s*NOT\s*OPEN\s*THIS\s*(?:TEST\s*)?BOOKLET
 const STRAY_TAIL=/(?:\s*\(\s*[A-D]\s*\)\s*(?:\(\s*[ivxIVX]{1,4}\s*\)\s*[,;]?\s*)+)+\s*$/;
 function romanOnly(s){ return /^[\s,;.&()ivxIVX]*$/.test(s.replace(/\band\b/gi,'')); }
 function findOptionRun(body){
-  const styles=[[/\(([a-eA-E])\)/g,3],[/(?:^|\s)([a-eA-E])\)(?=\s|$)/g,2],[/(?:^|\n)[ \t]*([a-eA-E])\.(?=\s)/g,2]];
+  const styles=(typeof GE_optStyles==='function') ? GE_optStyles() : [[/\(([a-eA-E])\)/g,3,'abcde',/\(([a-e])\)/g]];   // the source grammar chooses which option-marker shapes to look for
   const runs=[];
-  styles.forEach(([re,len])=>{
+  styles.forEach(([re,len,alpha,protRe])=>{
     const ms=[]; let m; re.lastIndex=0;
     while((m=re.exec(body))){ const end=m.index+m[0].length; ms.push({k:m[1].toLowerCase(), u:m[1]!==m[1].toLowerCase(), start:end-len, end}); }   // u: written as a capital letter
     const cand=[];   // every (a) and the run that starts there
+    const first=alpha.charAt?alpha.charAt(0):alpha[0];
+    const nxt=k=>{ const i=alpha.indexOf(k); return (i>=0 && i+1<alpha.length) ? (alpha.charAt?alpha.charAt(i+1):alpha[i+1]) : null; };
     for(let i=0;i<ms.length;i++){
-      if(ms[i].k!=='a') continue;
-      const run=[ms[i]]; let want='b', from=ms[i].end;
-      while(want<='e'){ const nx=ms.find(x=>x.k===want && x.u===ms[i].u && x.start>=from); if(!nx) break;   /* one letter case per run: in Assertion-Reason options "(a) Both (A) and (R) ... explanation of (A)" the (A) must never pair with (b)(c)(d) */ run.push(nx); from=nx.end; want=String.fromCharCode(want.charCodeAt(0)+1); }
+      if(ms[i].k!==first) continue;
+      const run=[ms[i]]; let want=nxt(first), from=ms[i].end;
+      while(want){ const nx=ms.find(x=>x.k===want && x.u===ms[i].u && x.start>=from); if(!nx) break;   /* one letter case per run: in Assertion-Reason options "(a) Both (A) and (R) ... explanation of (A)" the (A) must never pair with (b)(c)(d) */ run.push(nx); from=nx.end; want=nxt(want); }
       cand.push(run);
     }
     /* Normally the LAST (a) that starts a run wins (a stem may mention "(a)" and "(b)" earlier). But an (a) sitting inside (or mid-line right after)
@@ -2337,7 +2373,7 @@ function findOptionRun(body){
       const atLineStart=/(?:^|\n)[ \t]*$/.test(body.slice(0,run[0].start));
       const inside=cand.slice(0,c).some(o=>o.length>run.length && o[0].start<run[0].start && (o[o.length-1].start>run[0].start || !atLineStart));   // between an earlier run's options, or mid-line after its last one
       if(inside) continue;
-      runs.push(run); break;
+      run.p=protRe; runs.push(run); break;
     }
   });
   if(!runs.length) return null;
@@ -2349,7 +2385,8 @@ function findOptionRun(body){
   /* "(a)" / "(b)" written INSIDE an option's text ("(c) Both (a) and (b)", "(d) None of (a), (b) and (c)") are cross-references, not
      new options: protect them so parseBlock does not split there (restored to plain "(a)" once the options are split). An
      "Ans. (a)" left in the text is not protected -- parseBlock relies on it. */
-  const protect=t=>t.replace(/\(([a-e])\)/g,(m,k,off,str)=>/Ans(?:wer)?\s*[.:\-\u2013]?\s*$/i.test(str.slice(Math.max(0,off-12),off)) ? m : '\u0001'+k+'\u0002');
+  const PR=(best && best.p) || /\(([a-e])\)/g; try{ PR.lastIndex=0; }catch(e){}
+  const protect=t=>t.replace(PR,(m,k,off,str)=>/Ans(?:wer)?\s*[.:\-\u2013]?\s*$/i.test(str.slice(Math.max(0,off-12),off)) ? m : '\u0001'+k+'\u0002');
   best.forEach((r,i)=>{ canon+='('+r.k+')'+protect(body.slice(r.end, best[i+1]?best[i+1].start:body.length)); });
   return {start:best[0].start, canon};
 }
@@ -2389,9 +2426,11 @@ function parseBlock(num, raw){
   raw = raw.replace(/\r/g,'').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n');
   let tagLine=null;   // "Tag: UPSC CSE 2021" line (Gemini format)
   raw = raw.replace(/^[ \t]*(?:Tag|Source|Exam)[ \t]*[:\-\u2013][ \t]*(.+)$/gim,(m,g)=>{ tagLine=g.trim(); return ''; });
-  if(!/\([a-e]\)/.test(raw)) raw = raw.replace(/(^|\s)([a-e])\)(?=\s)/g,'$1($2)');   // options written "a) text" become "(a) text"; text like "(Rome)" is never touched
+  const GE_SPL=GE_optSplitRe(), GE_NRM=GE_optNormRe();   // option marker shapes come from the source grammar
+  if(!GE_SPL.test(raw) && GE_NRM) raw = raw.replace(GE_NRM,'$1($2)');   // options written "a) text" become "(a) text"; text like "(Rome)" is never touched
   let ansMatch = null;   // the answer line; but "...select the correct answer:" / "choose the right answer (a)..." in the QUESTION is not one
-  { const are=/(?:^|[^A-Za-z])((?:(?:Correct|Right)[ \t]+)?Ans(?:wer)?\s*\.?|(?:Correct|Right)[ \t]+(?:Option|Choice)|Sol(?:ution)?(?=\s*[:\-\u2013]\s*\(?[a-e]\))|उत्तर)\s*[:\-–]?\s*\(?([a-e*])\)?(?![A-Za-z])/gi; let am;
+  { const _ak=GE_ansKeyFrag(), _ac=GE_ansCls();   // the answer letter can be (a)-(e), or (1)-(5) or (i)-(v) in a source that numbers its options that way
+    const are=new RegExp('(?:^|[^A-Za-z])((?:(?:Correct|Right)[ \\t]+)?Ans(?:wer)?\\s*\\.?|(?:Correct|Right)[ \\t]+(?:Option|Choice)|Sol(?:ution)?(?=\\s*[:\\-\\u2013]\\s*\\(?['+_ac.replace('*','')+']\\))|\\u0909\\u0924\\u094D\\u0924\\u0930)\\s*[:\\-\\u2013]?\\s*\\(?('+_ak+')\\)?(?![A-Za-z])','gi'); let am;
     while((am=are.exec(raw))){
       const before=raw.slice(0, am.index+(am[0].length-am[0].replace(/^[^A-Za-z]/,'').length));
       if(/(?:^|\n)\s*$/.test(before) || !/\b(?:correct|right|appropriate|suitable|best|following|given|above|the|an|one|your|this)\s*$/i.test(before)){
@@ -2406,7 +2445,7 @@ function parseBlock(num, raw){
   if(ansMatch){ const em = raw.slice(ansMatch.index+ansMatch[0].length).match(/^[\s.]*(?:Detailed\s+Solution|Explanation|Exp|Solution|Sol|Reasoning|Reason|Rationale|Elaboration|Hint)\s*(?:[:.\-\u2013)]\s*|\n\s*)([\s\S]+)$/i); if(em) expl = cleanExpl(em[1]) || null; }
   if(ansMatch && !expl) expl = unlabeledExplanation(raw.slice(ansMatch.index+ansMatch[0].length));   // books print the explanation straight after "Ans. (b)", with no label
   const run = findOptionRun(body);
-  let firstOpt = run ? null : body.match(/\(([a-e])\)/);
+  let firstOpt = run ? null : body.match(GE_SPL);
   let qTextRaw = run ? body.slice(0, run.start) : (firstOpt ? body.slice(0, firstOpt.index) : body);
   let optsRaw = run ? run.canon : (firstOpt ? body.slice(firstOpt.index) : '');
   let qText = spaceOutMatchingLists(qTextRaw.trim().split('\n').map(l=>l.trim()).join('\n'));
@@ -2426,11 +2465,11 @@ function parseBlock(num, raw){
     break;
   }
   optsRaw = optLines.join('\n');
-  let parts = optsRaw.split(/\(([a-e])\)/);
+  let parts = optsRaw.split(GE_SPL);
   let opts = [];
   for(let i=1;i<parts.length;i+=2){
     let key = parts[i].toLowerCase();
-    let text = (parts[i+1]||'').trim().replace(/\s+/g,' ').replace(/\u0001([a-e])\u0002/g,'($1)');   // cross-references protected in findOptionRun
+    let text = (parts[i+1]||'').trim().replace(/\s+/g,' ').replace(GE_restoreRe(),'($1)');   // cross-references protected in findOptionRun
     if(text) opts.push({key,text});
   }
   const ANS_TAIL=/\s*\bAns(?:wer)?\b\s*[.:\-]?\s*$/i;
@@ -2467,7 +2506,7 @@ function normalizeQMarkers(t){
           .replace(/(^|\n)([ \t]*[Qq]\.?[ \t]*\d{1,3})[ \t]+([.)])/g,'$1$2$3');            // "Q.25 )" -> "Q.25)"
 }
 function stripCoachingJunk(t){
-  return t.replace(/\n[ \t]*[A-D][ \t]*(?=\n[ \t]*Shared\s*Freely)/g,'')                   // booklet-series letter printed just before the watermark
+  t = t.replace(/\n[ \t]*[A-D][ \t]*(?=\n[ \t]*Shared\s*Freely)/g,'')                   // booklet-series letter printed just before the watermark
     .replace(looseRe('Shared Freely in UPSC Test Series Zone'),' ')
     .replace(/[A-Z]{3,8}\s*PTS\s*\d{4}\s*\|(?:\s*[A-Za-z ]{3,14}\|)?\s*Test\s*Code\s*:\s*[\d ]+\|?/gi,' ')   // also the solutions header "UPPSC PTS 2026 | Solution | Test Code : 361038 |"
     .replace(/(?:^|\n)[ \t\f]*\[[A-Z]{1,4}-?\d+-\d+\][ \t]*\d{6,8}[ \t]*\(\d+[ \t]*[\u2013\u2212-][ \t]*[A-Z]\)[ \t]*(?=\n|$)/g,'\n')   // page code "[UP-1-25] 08062025 (2 - A)"
@@ -2475,7 +2514,9 @@ function stripCoachingJunk(t){
     .replace(/Forum\s*Learning\s*Centre[\s\S]{0,900}?helpdesk\s*@?[\w.\s]{0,30}?academy/gi,' ')
     .replace(/\bT\.?\s?B\.?\s?C\.?\s*:\s*[A-Z0-9-]+/g,' ')
     .replace(/Copyright\s*\u00A9[\s\S]{0,450}?without\s+prior\s+permission\s+of\s+[A-Za-z .]{2,30}\./gi,' ')   // "Copyright (c) by Vision IAS ... " closing box
-    .replace(/[ \t]*\bDark horse\b/g,'');   // reseller watermark; add other institutes' watermarks here
+    .replace(/[ \t]*\bDark horse\b/g,'');   // reseller watermark
+  for(let _gi=0;_gi<GE_LEARNED_JUNK.length;_gi++){ try{ t=t.replace(new RegExp(GE_LEARNED_JUNK[_gi],'gi'),' '); }catch(e){} }   // watermarks the app learned from uploads, so a new institute never needs a hand-written rule
+  return t;
 }
 /* Bilingual papers repeat every question in Hindi. For now only English is kept: Hindi-only lines are dropped,
    and Hindi words sharing a line with English are stripped. Set PARSE_LANG to anything else to switch this off
@@ -3477,7 +3518,8 @@ function copyTextFallback(text){
    qualify. "Q5." style markers are unambiguous and always accepted. */
 let lastAltRuns=[];
 function findQBoundaries(text){
-  const specs=[[/(?:^|\n)[ \t]*[Qq]\.?[ \t]*(\d{1,3})[ \t]*[.)][ \t]*/g,1],[/(?:^|\n)[ \t]*(\d{1,3})[ \t]+[-\u2013\u2014][ \t]+(?!Ans)/g,0],[/(?:^|\n)[ \t]*(\d{1,3})[.)]\s+/g,0],[/(?:^|\n)[ \t]*(\d{1,3})[.)](?=[A-Z])/g,0]];   // last: "144.What was common..." (no space after the dot; still needs an option run before the next number)
+  const specs=(typeof GE_qSpecs==='function') ? GE_qSpecs() : [[/(?:^|\n)[ \t]*[Qq]\.?[ \t]*(\d{1,3})[ \t]*[.)][ \t]*/g,1]];   // the source grammar (learned per book) chooses which number shapes count as questions
+  specs.forEach(s=>{ try{ s[0].lastIndex=0; }catch(e){} });
   const map=new Map();
   specs.forEach(([re,q])=>{ let m; while((m=re.exec(text))){ const p=map.get(m.index); if(!p||q>p.q) map.set(m.index,{num:parseInt(m[1],10), q, start:m.index, bodyStart:re.lastIndex}); } });
   const C=[...map.values()].sort((a,b)=>a.start-b.start);
@@ -5998,6 +6040,1097 @@ async function rematch(){const o=opp(),m=d.mode,s=d.subs,tp=d.tops||[],n=d.n;lea
 const open2=()=>{$('duelRoot').classList.add('on');paint()};
 return{open,close,snd,editNick,addView,saveNick,addFriend,answerReq,unfriend,newDuel,create,join,ready,start,pick,leave,home,showHist,showRev,togS,togT,setMode,setCnt,step,preset,setRevF,resume,copyId,copyCode,share,rematch,setWhenMode,setWhen,openSched,cancelSched,cal}
 })();
+</script>
+
+<script>
+/* ==================================================================================
+   PARSER LAB — SOURCE GRAMMAR ENGINE
+   ----------------------------------------------------------------------------------
+   Why this exists
+   ---------------
+   The hand-written parser reads the books it was tuned on very well and struggles on
+   anything else, because four things were hard-coded to those books:
+
+     1. which shapes count as a question number   (findQBoundaries: 4 fixed regexes)
+     2. which shapes count as an option marker    (findOptionRun:   (a)  a)  a.  only)
+     3. how an answer is printed                  (parseBlock / buildAnswerMap)
+     4. which lines are an institute's watermark  (stripCoachingJunk: ForumIAS, "Shared
+        Freely", "Dark horse" ... and a comment saying "add other institutes' here")
+
+   This engine replaces those four with a per-source GRAMMAR that the app works out for
+   itself, then remembers. The grammar is never a regex shipped from the cloud: it is a
+   list of IDs into a catalogue that lives in this file, so a bad or tampered record can
+   never run code.
+
+   The loop
+   --------
+     read pages -> fingerprint the source -> is it already known?
+        known  -> apply its grammar straight away (no learning needed)
+        new    -> work out the layout by scoring every plausible combination against the
+                  actual text -> verify it -> remember it -> send it for admin review
+     admin approves -> published -> every student gets it on their next start
+
+   Nothing is ever saved for others unless the read VERIFIES: the question numbers form
+   one unbroken run, every question came out with options and an answer, and none of the
+   layouts the app already reads correctly changed.
+   ================================================================================== */
+
+/* ---------- 1. Catalogues. IDs only: nothing here can be replaced from the network. ---------- */
+
+const GE_Q = {
+  'q-dot':      {re:/(?:^|\n)[ \t]*[Qq]\.?[ \t]*(\d{1,3})[ \t]*[.)][ \t]*/g,                              q:1, label:'Q1.  /  Q.1)'},
+  'num-dash':   {re:/(?:^|\n)[ \t]*(\d{1,3})[ \t]+[-\u2013\u2014][ \t]+(?!Ans)/g,                         q:0, label:'1 -'},
+  'num-dot':    {re:/(?:^|\n)[ \t]*(\d{1,3})[.)]\s+/g,                                                    q:0, label:'1.  /  1)'},
+  'num-tight':  {re:/(?:^|\n)[ \t]*(\d{1,3})[.)](?=[A-Z])/g,                                              q:0, label:'144.Question'},
+  'num-paren':  {re:/(?:^|\n)[ \t]*\((\d{1,3})\)[ \t]*/g,                                                 q:1, label:'(1)'},
+  'q-paren':    {re:/(?:^|\n)[ \t]*\(?[Qq]\.?[ \t]*(\d{1,3})\)?[ \t]*[.):]?[ \t]*/g,                      q:1, label:'(Q.1)'},
+  'num-brack':  {re:/(?:^|\n)[ \t]*\[(\d{1,3})\][ \t]*/g,                                                 q:1, label:'[1]'},
+  'num-dotdot': {re:/(?:^|\n)[ \t]*(\d{1,3})\.\.\s+/g,                                                    q:0, label:'1..'},
+  'num-colon':  {re:/(?:^|\n)[ \t]*(\d{1,3})[.):][ \t]*(?=\S)/g,                                          q:0, label:'1:  (tight)'},
+  'num-word':   {re:/(?:^|\n)[ \t]*Q(?:uestion)?[ \t]+(\d{1,3})[ \t]*[.):]?[ \t]*/gi,                     q:1, label:'Question 1'},
+  'hindi':      {re:/(?:^|\n)[ \t]*(?:\u092a\u094d\u0930\.\.?|\u092a\u094d\u0930\u0936\u094d\u0928)\s*(\d{1,3})[ \t]*[.):]?[ \t]*/g, q:1, label:'\u092a\u094d\u0930.1'}
+};
+const GE_Q_DEFAULT = ['q-dot','num-dash','num-dot','num-tight'];   // exactly what the parser used before
+
+const GE_OPT = {
+  paren:    {re:/\(([a-eA-E])\)/g,                   len:3, alpha:'abcde', prot:/\(([a-e])\)/g,                  split:/\(([a-e])\)/,      norm:null,                          label:'(a)'},
+  close:    {re:/(?:^|\s)([a-eA-E])\)(?=\s|$)/g,     len:2, alpha:'abcde', prot:/(?:^|\s)([a-e])\)(?=\s|$)/g,     split:/\(([a-e])\)/,      norm:/(^|\s)([a-e])\)(?=\s)/g,      label:'a)'},
+  dot:      {re:/(?:^|\n)[ \t]*([a-eA-E])\.(?=\s)/g, len:2, alpha:'abcde', prot:/(?:^|\n)[ \t]*([a-eA-E])\.(?=\s)/g, split:/\(([a-e])\)/,  norm:null,                          label:'a.'},
+  numparen: {re:/\(([1-5])\)/g,                      len:3, alpha:'12345', prot:/\(([1-5])\)/g,                  split:/\(([1-5])\)/,      norm:null,                          label:'(1)'},
+  numclose: {re:/(?:^|\s)([1-5])\)(?=\s|$)/g,        len:2, alpha:'12345', prot:/(?:^|\s)([1-5])\)(?=\s|$)/g,    split:/\(([1-5])\)/,      norm:/(^|\s)([1-5])\)(?=\s)/g,      label:'1)'},
+  numdot:   {re:/(?:^|\n)[ \t]*([1-5])\.(?=\s)/g,    len:2, alpha:'12345', prot:/(?:^|\n)[ \t]*([1-5])\.(?=\s)/g, split:/\(([1-5])\)/,     norm:null,                          label:'1.'},
+  roman:    {re:/\(([ivxIVX]{1,3})\)/g,              len:3, alpha:['i','ii','iii','iv','v'], prot:/\(([ivxIVX]{1,3})\)/g, split:/\(([ivx]{1,3})\)/, norm:null,                  label:'(i)'}
+};
+const GE_OPT_DEFAULT = ['paren','close','dot'];   // exactly what the parser used before
+const GE_RESTORE = /\u0001([a-eA-E1-5ivxIVX]{1,3})\u0002/g;
+
+/* ---------- 2. Active grammar + the hooks the old parser now calls ---------- */
+
+let GE_active = null;                 // {q:[ids], opt:[famIds], phrases:[regex sources]}
+let GE_qCache = null, GE_optCache = null, GE_splitCache = null;
+const GE_LEARNED_JUNK = [];           // regex sources of watermarks learned from uploads
+
+function GE_setActive(g){
+  GE_active = g || null;
+  GE_qCache = null; GE_optCache = null; GE_splitCache = null;
+  GE_LEARNED_JUNK.length = 0;
+  try{ (g && g.phrases || []).forEach(function(p){ if(typeof p==='string' && p.length>3) GE_LEARNED_JUNK.push(p); }); }catch(e){}
+}
+function GE_qSpecs(){
+  if(GE_qCache) return GE_qCache;
+  const ids = (GE_active && GE_active.q && GE_active.q.length) ? GE_active.q : GE_Q_DEFAULT;
+  const out = [];
+  ids.forEach(function(id){ const s = GE_Q[id]; if(s) out.push([s.re, s.q]); });
+  if(!out.length) GE_Q_DEFAULT.forEach(function(id){ out.push([GE_Q[id].re, GE_Q[id].q]); });
+  GE_qCache = out; return out;
+}
+function GE_optStyles(){
+  if(GE_optCache) return GE_optCache;
+  const fams = (GE_active && GE_active.opt && GE_active.opt.length) ? GE_active.opt : GE_OPT_DEFAULT;
+  const out = [];
+  fams.forEach(function(f){ const o = GE_OPT[f]; if(o && f!=='star') out.push([o.re, o.len, o.alpha, o.prot]); });
+  if(!out.length) { const o = GE_OPT.paren; out.push([o.re, o.len, o.alpha, o.prot]); }
+  GE_optCache = out; return out;
+}
+function GE_optSplitRe(){
+  if(GE_splitCache) return GE_splitCache;
+  const fams = (GE_active && GE_active.opt && GE_active.opt.length) ? GE_active.opt : GE_OPT_DEFAULT;
+  let re = null;
+  for(let i=0;i<fams.length;i++){
+    const o = GE_OPT[fams[i]]; if(!o) continue;
+    const a0 = Array.isArray(o.alpha) ? o.alpha[0] : o.alpha.charAt(0);
+    if(/^[a-e]$/.test(a0)){ re = o.split; break; }
+    if(!re) re = o.split;
+  }
+  GE_splitCache = re || /\(([a-e])\)/;
+  return GE_splitCache;
+}
+function GE_optNormRe(){
+  const fams = (GE_active && GE_active.opt && GE_active.opt.length) ? GE_active.opt : GE_OPT_DEFAULT;
+  for(let i=0;i<fams.length;i++){ const o = GE_OPT[fams[i]]; if(o && o.norm) return o.norm; }
+  return null;
+}
+function GE_restoreRe(){ return GE_RESTORE; }
+/* Which letter an answer can be. A book that prints its options as (1)(2)(3)(4) also
+   prints "Ans. (2)", so the answer slot has to widen with the option alphabet. */
+function GE_ansCls(){
+  try{
+    const fams = (GE_active && GE_active.opt && GE_active.opt.length) ? GE_active.opt : null;
+    if(!fams) return 'a-e*';
+    let L=false, N=false, R=false;
+    fams.forEach(function(f){
+      const o = GE_OPT[f]; if(!o) return;
+      const a0 = Array.isArray(o.alpha) ? String(o.alpha[0]) : String(o.alpha).charAt(0);
+      if(/^[a-e]$/i.test(a0)) L = true;
+      else if(/^[1-5]$/.test(a0)) N = true;
+      else if(/^[ivx]$/i.test(a0)) R = true;
+    });
+    let c = '*';
+    if(R) c = 'ivxIVX' + c;
+    if(N) c = '1-5' + c;
+    if(L) c = 'a-e' + c;
+    return c || 'a-e*';
+  }catch(e){ return 'a-e*'; }
+}
+/* Returned WITHOUT the outer capture: parseBlock wraps it as '('+frag+')', so the
+   answer key is always regex group 2, exactly as it was before. */
+function GE_ansKeyFrag(){
+  const c = GE_ansCls();
+  if(!/[1-5]|ivx/.test(c)) return '[' + c + ']';     // e.g. 'a-e*'  ->  ([a-e*])
+  const alts = [];
+  if(/ivx/.test(c)) alts.push('iv','v','iii','ii','i');
+  if(/1-5/.test(c)) alts.push('[1-5]');
+  if(/a-e/.test(c)) alts.push('[a-e]');
+  alts.push('\\*');
+  return '(?:' + alts.join('|') + ')';
+}
+
+/* ---------- 3. Fingerprint: is this a source we have already met? ----------
+   A file name is useless (everyone renames their PDFs), so identity comes from the
+   words themselves: a 48-value MinHash over 4-word shingles. Two different chapters of
+   the same book still share a large part of their vocabulary, so a partial overlap is
+   enough; repeated header/footer lines are used as a second, sharper signal.        */
+
+const GE_K = 48;
+function GE_hash(s){ let h = 2166136261>>>0; for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h>>>0; }
+function GE_words(t){
+  const s = String(t||'').toLowerCase();
+  try { return s.replace(/[^\p{L}\p{N} ]+/gu,' ').split(/\s+/).filter(function(w){ return w.length>1; }); }
+  catch(e){ return s.replace(/[^a-z0-9\u0900-\u097F ]+/g,' ').split(/\s+/).filter(function(w){ return w.length>1; }); }
+}
+function GE_minhash(text){
+  const w = GE_words(text), sig = new Array(GE_K).fill(4294967295), S = new Set();
+  for(let i=0;i+4<=w.length;i++) S.add(w[i]+' '+w[i+1]+' '+w[i+2]+' '+w[i+3]);
+  S.forEach(function(sh){
+    const h = GE_hash(sh);
+    for(let k=0;k<GE_K;k++){
+      let v = (h ^ Math.imul(k+1, 0x9E3779B1))>>>0;
+      v = (v ^ (v>>>15))>>>0; v = Math.imul(v, 0x85EBCA6B)>>>0; v = (v ^ (v>>>13))>>>0;
+      if(v < sig[k]) sig[k] = v;
+    }
+  });
+  return sig;
+}
+function GE_sim(a, b){
+  if(!a || !b || a.length !== b.length) return 0;
+  let n = 0; for(let i=0;i<a.length;i++) if(a[i] === b[i]) n++;
+  return n / a.length;
+}
+let _ge_fpKey = null, _ge_fpVal = null;
+function GE_fingerprint(text){
+  const k = text.length + ':' + GE_hash(text.slice(0,400)) + ':' + GE_hash(text.slice(-400));
+  if(k === _ge_fpKey && _ge_fpVal) return _ge_fpVal;
+  const sig = GE_minhash(text), furn = [];
+  try{ pendingFurniture.forEach(function(x){ furn.push(x); }); }catch(e){}
+  _ge_fpKey = k; _ge_fpVal = {sig:sig, furn:furn.slice(0,30)};
+  return _ge_fpVal;
+}
+
+/* ---------- 4. Mining an institute's watermark out of the pages ----------
+   The old code had a hand-written rule per coaching institute. Instead: any line that is
+   not a question, option or answer and that comes back on a quarter of the pages or more,
+   at any position, is furniture for this source. Digits are blurred to # first so a page
+   number or a test code does not make every copy look different.                      */
+
+let GE_mined = [];                     // [{raw, n, re}] from the pages of this upload
+function GE_phraseRe(p){ return String(p).replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/#/g,'\\d+').replace(/\s+/g,'\\s+'); }
+function GE_minePhrases(pages){
+  const total = pages.length; if(total < 4) return;
+  const cnt = {}, need = Math.max(3, Math.ceil(total * 0.25));
+  pages.forEach(function(pg){
+    const seen = new Set();
+    pg.forEach(function(l){
+      const t = String(l.t || '').trim();
+      if(!t || t.length < 8 || t.length > 120) return;
+      if(FURN_MARK.test(t)) return;                          // never a question/option/answer line
+      const k = t.toLowerCase().replace(/\d+/g,'#').replace(/\s+/g,' ').trim();
+      if(k.split(' ').length < 2) return;
+      if((k.match(/[a-z]/g)||[]).length < 8) return;
+      if(seen.has(k)) return;
+      seen.add(k); cnt[k] = (cnt[k]||0) + 1;
+    });
+  });
+  const out = [];
+  Object.keys(cnt).forEach(function(k){ if(cnt[k] >= need) out.push({raw:k, n:cnt[k], re:GE_phraseRe(k)}); });
+  out.sort(function(a,b){ return b.n - a.n; });
+  GE_mined = out.slice(0, 12);
+}
+const _ge_drop = pdfDropRunning;
+pdfDropRunning = function(pages){
+  const out = _ge_drop.apply(this, arguments);
+  try{ GE_minePhrases(pages); }catch(e){}
+  return out;
+};
+
+/* ---------- 5. Working out the layout ---------- */
+
+function GE_countOpts(text, famId){
+  const f = GE_OPT[famId]; if(!f) return null;
+  const re = f.re; re.lastIndex = 0;
+  const seen = {}; let m;
+  while((m = re.exec(text))){ const k = String(m[1]).toLowerCase(); seen[k] = (seen[k]||0) + 1; }
+  const al = f.alpha, arr = Array.isArray(al) ? al : al.split('');
+  const counts = arr.map(function(k){ return seen[k] || 0; });
+  const used = counts.slice(0,4);
+  const mx = Math.max.apply(null, used), mn = Math.min.apply(null, used);
+  return {fam:famId, counts:counts, min:mn, max:mx, balance: mx ? mn/mx : 0};
+}
+/* A real option family prints one (a), one (b), one (c), one (d) per question, so the
+   counts for a,b,c,d come out nearly EQUAL. That balance is what separates the family a
+   book actually uses from the others, and it costs one regex pass to measure. */
+function GE_shortlistOpt(text){
+  const out = [];
+  Object.keys(GE_OPT).forEach(function(f){
+    if(f === 'star') return;
+    const c = GE_countOpts(text, f);
+    if(c && c.min >= 3) out.push(c);
+  });
+  out.sort(function(a,b){ return (b.balance*100 + b.min*2) - (a.balance*100 + a.min*2); });
+  const fams = out.slice(0,3).map(function(c){ return c.fam; });
+  GE_OPT_DEFAULT.forEach(function(f){ if(fams.indexOf(f) < 0) fams.push(f); });
+  return {list:out, fams:fams.slice(0,5)};
+}
+/* The probe must look at exactly the text the real parser looks at. Cleaning happens
+   before the question numbers are found, so probing raw text would miss the phantom
+   boundaries a wrong shape creates (an option "1) Venus" only looks like question 1
+   once the watermarks and broken line-ends have been tidied away). */
+function GE_cleanText(text){
+  try{
+    const saved = PARSE_OPTS; PARSE_OPTS = {notes:true, legacy:true, multi:true, figures:true};
+    const t = stripNotes(fixLineHyphens(cleanWatermarkNoise(applyProfileJunk(String(text).replace(/\r/g,'')))));
+    PARSE_OPTS = saved;
+    return t;
+  }catch(e){ return String(text); }
+}
+/* The two choices are coupled: whether "1) Venus" survives as a question depends on
+   whether 1) is also the option marker, because the parser only accepts a question
+   number when it can see an option run after it. So question shapes are always probed
+   with the option family this source actually uses. */
+function GE_probeQ(text, ids, optFams){
+  GE_setActive({q:ids, opt:optFams || GE_OPT_DEFAULT});
+  const specs = GE_qSpecs(); specs.forEach(function(s){ try{ s[0].lastIndex = 0; }catch(e){} });
+  let C = []; try{ C = findQBoundaries(text); }catch(e){ C = []; }
+  if(!C.length) return {ids:ids, n:0, gaps:0, optRate:0, ansRate:0, score:-1e9};
+  let gaps = 0;
+  const byRun = {};
+  C.forEach(function(x){ const r = x.run || 0; (byRun[r] = byRun[r] || []).push(x.num); });
+  Object.keys(byRun).forEach(function(r){
+    const a = byRun[r].filter(function(n){ return !isNaN(n); });
+    if(a.length < 2) return;
+    const s = new Set(a);
+    for(let n = Math.min.apply(null,a); n <= Math.max.apply(null,a); n++) if(!s.has(n)) gaps++;
+  });
+  const OPTQ = /(?:^|\n)[ \t]*\(?[a-eA-E1-5]\)[ .)]|(?:^|\n)[ \t]*[a-eA-E1-5][.)]\s/;
+  const ANSQ = /(?:^|\n)[ \t]*(?:(?:Correct|Right)[ \t]+)?Ans(?:wer)?\s*\.?\s*[:\-\u2013]?\s*\(?[a-eA-E1-5*]\)?(?![A-Za-z])/i;
+  let wo = 0, wa = 0;
+  for(let i=0;i<C.length;i++){
+    const end = i+1 < C.length ? C[i+1].start : Math.min(text.length, C[i].bodyStart + 4000);
+    const seg = text.slice(C[i].bodyStart, end);
+    if(OPTQ.test(seg)) wo++;
+    if(ANSQ.test(seg)) wa++;
+  }
+  const n = C.length, optRate = wo/n, ansRate = wa/n;
+  return {ids:ids, n:n, gaps:gaps, optRate:optRate, ansRate:ansRate,
+          score: n*2 + optRate*45 + ansRate*35 - gaps*6 - (n<2?300:0)};
+}
+/* The shape that finds the most numbers is not always the right one. A book that marks
+   its options "1) 2) 3) 4)" also matches the "1." and "144.Question" question-number
+   shapes, so every option turns into a phantom question. Trying subsets as well as
+   supersets lets the app DROP a shape that is firing on the options. */
+const GE_Q_CORE = ['q-dot','num-dot','num-paren','num-brack','num-word','num-dash','num-tight'];
+function GE_qCandidates(){
+  const seen = {}, out = [];
+  const add = function(ids){
+    if(!ids.length) return;
+    const k = ids.slice().sort().join('+');
+    if(seen[k]) return;
+    seen[k] = 1; out.push(ids);
+  };
+  add(GE_Q_DEFAULT);                                          // what the parser does today
+  GE_Q_DEFAULT.forEach(function(d){                           // one default shape left out
+    add(GE_Q_DEFAULT.filter(function(x){ return x !== d; }));
+  });
+  for(let i=0;i<GE_Q_DEFAULT.length;i++) for(let j=i+1;j<GE_Q_DEFAULT.length;j++)
+    add(GE_Q_DEFAULT.filter(function(x,k){ return k !== i && k !== j; }));
+  Object.keys(GE_Q).forEach(function(id){                     // one extra shape added
+    if(GE_Q_DEFAULT.indexOf(id) < 0) add(GE_Q_DEFAULT.concat([id]));
+  });
+  GE_Q_CORE.forEach(function(a){ add([a]); });                // and the bare minimum: one or two shapes only
+  for(let i=0;i<GE_Q_CORE.length;i++) for(let j=i+1;j<GE_Q_CORE.length;j++) add([GE_Q_CORE[i], GE_Q_CORE[j]]);
+  return out;
+}
+function GE_shortlistQ(text, optFams){
+  const res = [];
+  GE_qCandidates().forEach(function(ids){ try{ res.push(GE_probeQ(text, ids, optFams)); }catch(e){} });
+  res.sort(function(a,b){ return b.score - a.score; });
+  const top = res[0] || {score:-1e9}, keep = [], seenKey = {};
+  const keyOf = ids => ids.slice().sort().join('+');
+  for(let i=0;i<res.length && keep.length<3;i++){          // the three best on the probe
+    const key = keyOf(res[i].ids);
+    if(seenKey[key]) continue;
+    if(res[i].score > top.score - 6){ seenKey[key] = 1; keep.push(res[i].ids); }
+  }
+  const dk = keyOf(GE_Q_DEFAULT);                          // today's behaviour is always in the comparison
+  if(!seenKey[dk]) keep.push(GE_Q_DEFAULT);
+  return {ranked:res, keep:keep};
+}
+function GE_runParse(text, q, opt){
+  GE_setActive({q:q, opt:opt});
+  const saved = PARSE_OPTS; PARSE_OPTS = {notes:true, legacy:true, multi:true, figures:true};
+  let found = [], d = null;
+  try{ found = parseFullText(text, ''); d = lastParseDiag; }catch(e){ found = []; }
+  finally{ PARSE_OPTS = saved; }
+  return {found:found, d:d};
+}
+function GE_score(found, d){
+  const n = found.length; if(!n) return -1e9;
+  const gaps = (d && d.missingNums) ? d.missingNums.length : 0;
+  const rej  = (d && d.rejected) ? d.rejected.length : 0;
+  const dup  = (d && d.dupNums) ? d.dupNums.length : 0;
+  const cov  = (d && d.noAnswer) ? (n - d.noAnswer.length)/n : 0;
+  const wo   = found.filter(function(q){ return q.options.length >= 2; }).length;
+  const run  = found.filter(function(q){ return q.text.length > 1500; }).length;
+  return n*3 + cov*30 + (wo/n)*20 - gaps*5 - rej*4 - dup*4 - run*5 - (n<2?300:0);
+}
+function GE_verify(found, d){
+  const n = found.length;
+  const gaps = (d && d.missingNums) ? d.missingNums.length : 0;
+  const rej  = (d && d.rejected) ? d.rejected.length : 0;
+  const dup  = (d && d.dupNums) ? d.dupNums.length : 0;
+  const cov  = (d && d.noAnswer && n) ? (n - d.noAnswer.length)/n : (n?0:0);
+  const wo   = found.filter(function(q){ return q.options.length >= 2; }).length;
+  const key  = (d && d.expected) || 0;                       // answers printed in these pages
+  let conf = 0.45 + (gaps===0?0.22:0) + cov*0.20 + (rej===0?0.08:0) + (dup===0?0.05:0);
+  conf -= Math.min(0.35, gaps/Math.max(1,n) * 0.9);
+  conf -= Math.min(0.20, rej /Math.max(1,n) * 0.6);
+  if(key > 0 && Math.abs(key - n) <= 1 && cov >= 0.9) conf += 0.15;   // a printed answer key is ground truth
+  if(key > 0 && n > key + 2) conf -= 0.25;                            // far more "questions" than printed answers
+  if(n < 2) conf = 0;
+  conf = Math.max(0, Math.min(1, conf));
+  return {
+    n:n, gaps:gaps, rejected:rej, dup:dup, coverage:Math.round(cov*100)/100, options:wo, expected:key,
+    conf:Math.round(conf*100)/100,
+    verified: n >= 2 && gaps === 0 && rej === 0 && dup === 0 && cov >= 0.85 && wo === n,
+    missingNums: (d && d.missingNums) ? d.missingNums.slice(0,30) : [],
+    rejectedNums: (d && d.rejected) ? d.rejected.slice(0,30).map(function(r){ return r.num; }) : [],
+    strategy: (d && d.strategy) || 'standard'
+  };
+}
+function GE_infer(text, opts){
+  text = String(text || '');
+  const raw = text.length > 60000 ? text.slice(0,45000) + '\n\n' + text.slice(-15000) : text;
+  const sample = GE_cleanText(raw);
+  const os = GE_shortlistOpt(sample);
+  const qs = GE_shortlistQ(sample, os.fams);
+  let best = null;
+  const famSets = [os.fams, GE_OPT_DEFAULT];
+  for(let i=0;i<qs.keep.length;i++){
+    for(let j=0;j<famSets.length;j++){
+      const r = GE_runParse(sample, qs.keep[i], famSets[j]);
+      const s = GE_score(r.found, r.d);
+      if(!best || s > best.s) best = {q:qs.keep[i], opt:famSets[j], s:s, n:r.found.length, d:r.d};
+    }
+  }
+  if(best && best.opt.length > 1){                     // maybe one family alone is cleaner
+    for(let j=0;j<os.fams.length;j++){
+      const r = GE_runParse(sample, best.q, [os.fams[j]]);
+      const s = GE_score(r.found, r.d);
+      if(s > best.s) best = {q:best.q, opt:[os.fams[j]], s:s, n:r.found.length, d:r.d};
+    }
+  }
+  if(!best) best = {q:GE_Q_DEFAULT, opt:GE_OPT_DEFAULT, s:-1e9, n:0, d:null};
+  GE_setActive({q:best.q, opt:best.opt});
+  if(opts && opts.full === false) return {q:best.q, opt:best.opt, phrases:GE_mined.map(function(x){ return x.re; }),
+
+          full:null, qRanked:qs.ranked.slice(0,6), optRanked:os.list.slice(0,6)};
+  let full = null;
+  try{
+    const saved = PARSE_OPTS; PARSE_OPTS = {notes:true, legacy:true, multi:true, figures:true};
+    let f = []; let d = null;
+    try{ f = parseFullText(text, ''); d = lastParseDiag; }catch(e){ f = []; }
+    PARSE_OPTS = saved;
+    full = {found:f, d:d, verify:GE_verify(f, d)};
+  }catch(e){ full = null; }
+  return {q:best.q, opt:best.opt, phrases:GE_mined.map(function(x){ return x.re; }),
+          full:full, qRanked:qs.ranked.slice(0,6), optRanked:os.list.slice(0,6)};
+}
+
+/* ---------- 6. Store: this device, and the published library ---------- */
+
+let GE_store = [];
+try{ GE_store = loadLS('tm_grammars', []); if(!Array.isArray(GE_store)) GE_store = []; }catch(e){ GE_store = []; }
+let GE_remote = [];
+function GE_saveStore(){
+  try{
+    if(GE_store.length > 60){ GE_store.sort(function(a,b){ return (b.ts||0) - (a.ts||0); }); GE_store.length = 60; }
+    saveLS('tm_grammars', GE_store);
+  }catch(e){}
+}
+function GE_all(){ return GE_store.concat(GE_remote); }
+function GE_loadRemoteCache(){
+  try{
+    const c = loadLS('tm_grammars_remote', []);
+    GE_remote = (Array.isArray(c) ? c : []).filter(function(g){ return g && g.g && g.g.q; })
+      .map(function(g){ g.published = true; g.off = false; return g; });
+  }catch(e){ GE_remote = []; }
+}
+GE_loadRemoteCache();
+
+/* Two different polity books share a lot of words, so the word overlap alone is not
+   enough to say "same source". It takes a clear overlap, or the publisher's own repeated
+   header/footer lines turning up again (those are close to unique per publication).
+   A wrong match is recoverable anyway: parseSmart notices when a remembered layout stops
+   reading a book completely and switches it off for that read. */
+function GE_matchFp(sig, furn){
+  let best = null;
+  GE_all().forEach(function(g){
+    if(!g || g.off) return;
+    const sc = GE_sim(sig, g.fp && g.fp.sig);
+    let shared = 0;
+    if(g.fp && g.fp.furn && furn && furn.length) g.fp.furn.forEach(function(k){ if(furn.indexOf(k) >= 0) shared++; });
+    if(sc >= 0.45 || shared >= 3 || (sc >= 0.35 && shared >= 2)){
+      const s = sc + shared*0.12 + (g.published ? 0.05 : 0);
+      if(!best || s > best.s) best = {g:g, s:s, sim:sc, shared:shared};
+    }
+  });
+  return best;
+}
+
+/* A known source is recognised before the very first strategy is tried. */
+let GE_matched = null, GE_texts = [];
+let GE_noMatch = false;         // true while we are deliberately re-reading without the remembered layout
+let GE_grammarFailed = false;   // set when a remembered layout had to be switched off to finish a read
+function GE_applyKnown(text){
+  if(GE_noMatch || GE_matched) return GE_matched;
+  if(String(text || '').length < 2000) return null;      // far too short to identify a book: never apply a remembered layout to it
+  try{
+    const fp = GE_fingerprint(text);
+    const m = GE_matchFp(fp.sig, fp.furn);
+    if(m){ GE_setActive({q:m.g.g.q, opt:m.g.g.opt, phrases:m.g.phrases || []}); GE_matched = m; }
+  }catch(e){}
+  return GE_matched;
+}
+const _ge_profileOrder = profileOrder;
+profileOrder = function(text){ try{ GE_applyKnown(text); }catch(e){} return _ge_profileOrder.call(this, text); };
+
+/* Safety net. A remembered layout is only ever kept for a book if it actually helps: if
+   the read came out incomplete with it on, the same text is read once more with it off and
+   whichever reading is better wins. So a grammar that was right for one chapter, or that
+   was matched to the wrong book, can never lose questions — it just stops being used. */
+const _ge_parseSmart = parseSmart;
+parseSmart = function(text, sol){
+  const found = _ge_parseSmart.apply(this, arguments);
+  try{
+    if(GE_matched && GE_matched.g && (!found.length || parseNeedsMore(found, lastParseDiag))){   // zero questions counts as "did not work" too
+      const d1 = lastParseDiag, savedM = GE_matched;
+      GE_matched = null; GE_noMatch = true;
+      const s1 = scoreParse(found, d1);
+      let bestF = null, bestD = null, bestS = -Infinity, bestG = null;
+      /* (a) is the book simply better off with no remembered layout at all? */
+      try{ GE_setActive(null); const f2 = parseSmartCore(text, sol); bestS = scoreParse(f2, lastParseDiag); bestF = f2; bestD = lastParseDiag; bestG = null; }
+      catch(e){ bestF = null; }
+      /* (b) if not, the memory is simply wrong for this book, so work the layout out again
+             from the pages in front of us rather than leaving the student with nothing. */
+      if(!(bestS > s1)){
+        try{
+          const inf = GE_infer(text, {full:false});
+          const cand = {q:inf.q, opt:inf.opt, phrases:inf.phrases};
+          GE_setActive(cand);
+          const f3 = parseSmartCore(text, sol);
+          const s3 = scoreParse(f3, lastParseDiag);
+          if(s3 > bestS){ bestF = f3; bestD = lastParseDiag; bestS = s3; bestG = cand; }
+        }catch(e){}
+      }
+      if(bestF && bestS > s1){
+        bestD = bestD || {}; bestD.grammarOff = true;
+        lastParseDiag = bestD;
+        GE_grammarFailed = true;
+        if(bestG) GE_setActive(bestG); else GE_setActive(null);
+        try{ logIssue('grammar-worse', 'grammar ' + (savedM.g.id || ''), 'gr' + (savedM.g.id || '')); }catch(e){}
+        return bestF;
+      }
+      GE_matched = savedM; GE_setActive({q:savedM.g.g.q, opt:savedM.g.g.opt, phrases:savedM.g.phrases || []});
+      lastParseDiag = d1;
+    }
+  }catch(e){}
+  finally{ GE_noMatch = false; }
+  return found;
+};
+
+/* Saved samples remember which source they came from, so the gate can tell "this book"
+   from "some other book". */
+const _ge_saveFixture = saveFixture;
+saveFixture = function(name, text){
+  const r = _ge_saveFixture.apply(this, arguments);
+  try{
+    if(r && parseFixtures.length){
+      const f = parseFixtures[parseFixtures.length - 1];
+      if(f && !f.fpSig){ f.fpSig = GE_fingerprint(String(text || '')).sig; saveLS('tm_parse_fixtures', parseFixtures); }
+    }
+  }catch(e){}
+  return r;
+};
+/* The built-in test set is the fixed reference for the hand-written rules, so it is always
+   run with no remembered layout applied. */
+const _ge_selfTest = runParserSelfTest;
+runParserSelfTest = function(){
+  const saved = GE_noMatch, savedM = GE_matched, savedA = GE_active;
+  GE_noMatch = true; GE_matched = null; GE_setActive(null);
+  try{ return _ge_selfTest.apply(this, arguments); }
+  finally{ GE_noMatch = saved; GE_matched = savedM; GE_setActive(savedA); }
+};
+
+const _ge_recogNote = recogNote;
+recogNote = function(){
+  const base = _ge_recogNote.apply(this, arguments);
+  try{
+    if(GE_matched && GE_matched.g && GE_matched.g.name)
+      return 'Recognised book: ' + escH(String(GE_matched.g.name).split(/\s[\u2014|\-]\s/)[0]) +
+             ' \u2014 its layout is already known, so nothing had to be worked out again.';
+    if(GE_matched) return 'Recognised a source you have read before: its layout was applied straight away.';
+  }catch(e){}
+  return base;
+};
+
+/* ---------- 7. Learning from a normal upload ---------- */
+
+const _ge_checkAdd = checkAdd;
+checkAdd = function(label, found, d, text){
+  try{ if(text) GE_texts.push(String(text)); }catch(e){}
+  return _ge_checkAdd.apply(this, arguments);
+};
+const _ge_profReset = profReset;
+profReset = function(fn){
+  try{ GE_texts = []; GE_matched = null; _ge_fpKey = null; GE_mined = []; GE_noMatch = false; GE_grammarFailed = false; GE_setActive(null); }catch(e){}
+  return _ge_profReset.apply(this, arguments);
+};
+const _ge_learn = learnFromUpload;
+learnFromUpload = function(){
+  const junkLines = [];
+  try{ pendingFurniture.forEach(function(k){ junkLines.push(k); }); }catch(e){}
+  const r = _ge_learn.apply(this, arguments);
+  try{ GE_onLearned(r, junkLines); }catch(e){ console.warn('grammar learn failed', e); }
+  return r;
+};
+
+function GE_bookName(){
+  let n = '';
+  try{ n = String(bookHint() || ''); }catch(e){}
+  n = n.replace(/\s*\|\s*$/,'').trim();
+  if(!n) n = 'Unnamed source ' + new Date().toISOString().slice(0,10);
+  return n.slice(0, 80);
+}
+function GE_pretty(qIds, optFams){
+  return {
+    q: qIds.map(function(id){ return (GE_Q[id] && GE_Q[id].label) || id; }),
+    opt: optFams.map(function(f){ return (GE_OPT[f] && GE_OPT[f].label) || f; })
+  };
+}
+function GE_fixture(text, name, g){
+  let t = String(text || '');
+  if(t.length > 40000){ const c = t.lastIndexOf('\n\n', 40000); t = t.slice(0, c > 5000 ? c : 40000); }
+  let sig = null;
+  try{ const saveA = GE_active; GE_setActive(g || null); sig = parseSig(parseSmart(t, '')); GE_setActive(saveA); }
+  catch(e){ sig = null; }
+  let fpSig = null;
+  try{ fpSig = GE_fingerprint(t).sig; }catch(e){}
+  return {h:hashStr(t), text:t, sig:sig, fpSig:fpSig, name:String(name || 'Learned source').slice(0,60)};
+}
+function GE_onLearned(res, junkLines){
+  const text = GE_texts.join('\n\n');
+  if(!text || text.length < 400) return;
+  const fp = GE_fingerprint(text);
+  const furn = (junkLines && junkLines.length) ? junkLines.slice(0,30) : fp.furn;
+  const known = GE_matchFp(fp.sig, furn);
+  if(known){                                    // already in the library
+    known.g.uses = (known.g.uses || 0) + 1; known.g.ts = Date.now();
+    /* ...but if this read only finished once that remembered layout was switched off,
+       the memory is wrong for this book. Work it out again and replace it. */
+    if(GE_grammarFailed && known.g.local){
+      try{
+        const inf2 = GE_infer(text);
+        const v2 = (inf2.full && inf2.full.verify) || {verified:false, conf:0};
+        /* The memory was proven wrong by this very read, so confidence is not compared:
+           any layout that reads the book completely and breaks nothing replaces it. */
+        if(v2.verified && !GE_gate({q:inf2.q, opt:inf2.opt, phrases:inf2.phrases}, fp).length){
+          known.g.g = {q:inf2.q, opt:inf2.opt};
+          known.g.phrases = inf2.phrases.slice(0,12);
+          known.g.verify = v2;
+          known.g.pretty = GE_pretty(inf2.q, inf2.opt);
+          known.g.fixture = GE_fixture(text, known.g.name, {q:inf2.q, opt:inf2.opt, phrases:inf2.phrases});
+          known.g.correctedAt = Date.now();
+        }
+      }catch(e){}
+    }
+    if(known.g.local) GE_saveStore();
+    return;
+  }
+  /* A source that could not be read completely is worth one attempt, not one per upload:
+     remember it did not work out and leave the pages alone next time. */
+  for(let i=0;i<GE_skipFp.length;i++){ if(GE_sim(fp.sig, GE_skipFp[i]) >= 0.6) return; }
+  const inf = GE_infer(text);
+  const v = (inf.full && inf.full.verify) || {verified:false, conf:0, n:0};
+  if(!v.verified && !(v.conf >= 0.6 && v.n >= 3)){          // not good enough to remember at all
+    GE_skipFp.push(fp.sig);
+    if(GE_skipFp.length > 20) GE_skipFp.shift();
+    return;
+  }
+  const entry = {
+    id: 'g' + Date.now().toString(36), v:2, name: GE_bookName(), local:true,
+    fp: {sig:fp.sig, furn:furn},
+    g: {q:inf.q, opt:inf.opt},
+    phrases: inf.phrases.slice(0,12),
+    verify: v, pretty: GE_pretty(inf.q, inf.opt),
+    fixture: v.verified ? GE_fixture(text, GE_bookName(), {q:inf.q, opt:inf.opt, phrases:inf.phrases}) : null,
+    uses: 1, ts: Date.now()
+  };
+  GE_store.push(entry); GE_saveStore();
+  GE_lastLearned = entry;
+  if(v.verified && v.conf >= 0.7 && loadLS('tm_pool_auto', true)) GE_submit(entry);
+}
+let GE_lastLearned = null;
+let GE_skipFp = [];          // sources we already tried and could not read completely this session
+
+/* ---------- 8. Cloud: submissions wait for the admin, published grammars go live ---------- */
+
+async function GE_submit(entry){
+  if(!fbOk()) return 'offline';
+  try{
+    await firebase.firestore().collection('grammarSubs').doc(fbUid + '_' + entry.id).set({
+      uid: fbUid, gid: entry.id, name: entry.name || '', conf: entry.verify ? entry.verify.conf : 0,
+      q: entry.g.q, opt: entry.g.opt, phrases: entry.phrases || [],
+      fpSig: (entry.fp.sig || []).map(String), fpFurn: entry.fp.furn || [],
+      fixture: entry.fixture || null, verify: entry.verify || null, pretty: entry.pretty || null,
+      build: APP_BUILD, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    return 'ok';
+  }catch(e){ console.warn('grammar submit failed', e); return 'fail'; }
+}
+async function GE_syncRemote(){
+  if(!fbOk()) return;
+  try{
+    const snap = await firebase.firestore().collection('sourceGrammars').where('off','==',false).limit(300).get();
+    GE_remote = [];
+    snap.forEach(function(d){
+      const v = d.data();
+      if(!v || !v.q || !v.opt) return;
+      GE_remote.push({
+        id:'r'+d.id, v:2, published:true, off:false, name:v.name||'',
+        g:{q:v.q, opt:v.opt}, phrases:v.phrases||[],
+        fp:{sig:(v.fpSig||[]).map(Number), furn:v.fpFurn||[]},
+        verify:v.verify||null, conf:v.conf||0, uses:v.uses||0,
+        fixtures:v.fixtures || (v.fixture ? [v.fixture] : []),
+        ts:(v.ts && v.ts.toMillis) ? v.ts.toMillis() : 0
+      });
+    });
+    saveLS('tm_grammars_remote', GE_remote.map(function(g){
+      return {id:g.id, name:g.name, g:g.g, phrases:g.phrases, fp:g.fp, verify:g.verify,
+              conf:g.conf, uses:g.uses, fixtures:g.fixtures, ts:g.ts};
+    }));
+  }catch(e){ console.warn('grammar sync failed', e); }
+}
+const _ge_poolSync = poolSync;
+poolSync = async function(){ const r = await _ge_poolSync.apply(this, arguments); try{ await GE_syncRemote(); }catch(e){} return r; };
+const _ge_poolLoad = poolLoadCache;
+poolLoadCache = function(){ const r = _ge_poolLoad.apply(this, arguments); GE_loadRemoteCache(); return r; };
+setTimeout(function(){ try{ if(fbOk()) GE_syncRemote(); }catch(e){} }, 6000);
+setTimeout(function(){ try{ if(fbOk()) GE_syncRemote(); }catch(e){} }, 20000);
+
+/* The regression gate. A layout is only ever applied to the source it was learned from,
+   so it is only ever tested against that source's own samples — demanding that a book
+   which numbers its options (1)(2)(3)(4) still read a synthetic (a)(b)(c)(d) sample would
+   reject every real layout. The built-in test set is protected differently: a remembered
+   layout is never applied to it at all (see GE_applyKnown / runParserSelfTest below). */
+function GE_gate(g, fp){
+  const fails = [], saveA = GE_active;
+  const sameSource = fx => !fp || !fx || !fx.fpSig || GE_sim(fp.sig, fx.fpSig) >= 0.35;
+  try{
+    GE_setActive(g);
+    const list = [];
+    parseFixtures.forEach(function(f){
+      if(sameSource(f)) list.push({name:'Saved: ' + f.name, text:f.text, sig:f.sig});
+    });
+    GE_remote.forEach(function(gm){
+      (gm.fixtures || []).forEach(function(fx){
+        if(fx && fx.text && sameSource(fx))
+          list.push({name:(gm.name || 'Published book') + ' \u2014 ' + (fx.name || 'sample'), text:fx.text, sig:fx.sig});
+      });
+    });
+    list.forEach(function(t){
+      let sig = '';
+      try{ sig = parseSig(parseFullText(t.text, '')); }catch(e){ sig = 'crashed'; }
+      if(t.sig && sig !== t.sig) fails.push(t.name);
+    });
+  }catch(e){}
+  GE_setActive(saveA);
+  return fails;
+}
+
+/* ---------- 9. Parser lab (admin) ---------- */
+
+let LAB = {tab:'queue', subs:[], pub:[], pdf:null, name:'', result:null};
+
+function labEsc(s){ try{ return escH(s); }catch(e){ return String(s).replace(/[&<>"]/g,''); } }
+
+async function labPickPdf(ev){
+  const file = ev.target.files[0]; if(!file) return;
+  try{
+    const lib = await ensurePdfJs();
+    const pdf = await lib.getDocument({data: await file.arrayBuffer(), verbosity:0}).promise;
+    LAB.pdf = pdf; LAB.name = String(file.name).replace(/\.pdf$/i,'').slice(0,80);
+    document.getElementById('labFile').textContent = file.name + ' · ' + pdf.numPages + ' pages';
+    document.getElementById('labGo').disabled = false;
+    const f = document.getElementById('labFrom'), t = document.getElementById('labTo');
+    f.value = 1; t.value = Math.min(pdf.numPages, 100);
+    document.getElementById('labResult').innerHTML = '';
+  }catch(e){
+    document.getElementById('labFile').textContent = 'Could not open that PDF.';
+  }
+  ev.target.value = '';
+}
+
+async function labAnalyse(){
+  if(!LAB.pdf) return;
+  const st = document.getElementById('labResult'), btn = document.getElementById('labGo');
+  const N = LAB.pdf.numPages;
+  const from = Math.max(1, Math.min(N, parseInt(document.getElementById('labFrom').value, 10) || 1));
+  let to = parseInt(document.getElementById('labTo').value, 10) || 0;
+  to = Math.min(N, Math.max(from, to || from + 99, from));
+  if(to - from + 1 > 100) to = from + 99;
+  btn.disabled = true;
+  const say = m => { st.innerHTML = '<p class="muted" style="margin:8px 0;">' + labEsc(m) + '</p>'; };
+  say('Reading pages ' + from + '–' + to + '…');
+  try{
+    profReset(null);
+    const pages = pdfDropRunning(await pdfBuildPages(LAB.pdf, from, to, say));
+    const text = pages.map(pg => pg.map(l => l.t).join('\n')).join('\n\n');
+    if(!text.trim()){ say('No selectable text in those pages. Is it a scan?'); btn.disabled = false; return; }
+    await new Promise(r => setTimeout(r, 30));
+    say('Working out how this book is laid out…');
+    await new Promise(r => setTimeout(r, 30));
+    const inf = GE_infer(text);
+    const v = (inf.full && inf.full.verify) || {verified:false, conf:0, n:0, gaps:0, rejected:0, dup:0, coverage:0, options:0, expected:0};
+    say('Checking it cannot break the books the app already reads…');
+    await new Promise(r => setTimeout(r, 30));
+    const fp = GE_fingerprint(text);
+    const gate = GE_gate({q:inf.q, opt:inf.opt, phrases:inf.phrases}, fp);
+    LAB.result = {inf:inf, v:v, gate:gate, fp:fp, text:text,
+                  fixture: v.verified ? GE_fixture(text, LAB.name, {q:inf.q, opt:inf.opt, phrases:inf.phrases}) : null};
+    labRenderResult();
+  }catch(e){
+    console.warn(e); say('Something went wrong: ' + ((e && e.message) || e));
+  }
+  btn.disabled = false;
+}
+
+function labRenderResult(){
+  const st = document.getElementById('labResult'), R = LAB.result;
+  if(!R){ st.innerHTML = ''; return; }
+  const v = R.v, inf = R.inf, pr = GE_pretty(inf.q, inf.opt);
+  const pct = Math.round((v.conf || 0) * 100);
+  const col = v.verified ? 'var(--green)' : (v.conf >= 0.6 ? 'var(--orange)' : 'var(--red)');
+  let h = '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">';
+
+  h += '<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">'
+     + '<div style="font-size:22px;line-height:1;">' + (v.verified ? '✅' : '⚠️') + '</div>'
+     + '<div style="flex:1;min-width:0;">'
+     + '<div style="font-weight:700;font-size:14px;">' + (v.verified ? 'Read all ' + v.n + ' questions cleanly' : 'Read ' + v.n + ' questions, but not completely') + '</div>'
+     + '<div class="muted" style="font-size:11.5px;">Confidence ' + pct + '%'
+     + (v.expected ? ' · ' + v.expected + ' answers printed in these pages' : '') + '</div>'
+     + '<div style="height:6px;background:var(--border);border-radius:3px;margin-top:5px;overflow:hidden;">'
+     + '<i style="display:block;height:100%;width:' + pct + '%;background:' + col + ';"></i></div>'
+     + '</div></div>';
+
+  h += '<div style="font-size:12.5px;line-height:1.7;">'
+     + '<div><b>Question numbers</b> <span class="muted">' + labEsc(pr.q.join(' · ')) + '</span></div>'
+     + '<div><b>Options</b> <span class="muted">' + labEsc(pr.opt.join(' · ')) + '</span></div>'
+     + '<div><b>Reading style</b> <span class="muted">' + labEsc(v.strategy || 'standard') + '</span></div>'
+     + '</div>';
+
+  const problems = [];
+  if(v.gaps) problems.push(v.gaps + ' number(s) missing from the run (' + v.missingNums.slice(0,8).join(', ') + ')');
+  if(v.rejected) problems.push(v.rejected + ' block(s) had no readable options (Q' + v.rejectedNums.slice(0,8).join(', Q') + ')');
+  if(v.dup) problems.push(v.dup + ' number(s) read twice');
+  if(v.coverage < 1) problems.push(Math.round((1 - v.coverage) * 100) + '% of questions came out without an answer');
+  if(problems.length)
+    h += '<div style="margin-top:8px;font-size:12px;color:var(--orange);line-height:1.6;">' + problems.map(labEsc).join('<br>') + '</div>';
+
+  if(GE_mined.length){
+    h += '<details style="margin-top:10px;"><summary style="cursor:pointer;font-size:12.5px;">Watermarks it will now strip (' + GE_mined.length + ')</summary>'
+       + '<div style="margin-top:6px;font-size:11.5px;line-height:1.6;" class="muted">'
+       + GE_mined.map(m => labEsc(m.raw) + ' <span style="opacity:.7">(' + m.n + '×)</span>').join('<br>')
+       + '</div></details>';
+  }
+
+  h += '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;">Why it chose those (what it ruled out)</summary>'
+     + '<div style="margin-top:6px;font-size:11.5px;line-height:1.6;" class="muted">'
+     + '<b>Numbering</b><br>' + (inf.qRanked || []).map(r => labEsc(r.ids.join('+')) + ' → ' + r.n + ' questions, ' + r.gaps + ' gaps, score ' + Math.round(r.score)).join('<br>')
+     + '<br><br><b>Options</b><br>' + (inf.optRanked || []).map(c => labEsc(c.fam) + ' → a/b/c/d seen ' + c.counts.slice(0,4).join('/') + ' times').join('<br>')
+     + '</div></details>';
+
+  if(R.gate && R.gate.length)
+    h += '<div style="margin-top:10px;font-size:12px;color:var(--red);line-height:1.6;"><b>⛔ Not safe to publish.</b> It would change how these layouts read:<br>' + R.gate.map(labEsc).join('<br>') + '</div>';
+  else
+    h += '<div style="margin-top:10px;font-size:12px;color:var(--green);">✓ Every layout the app already reads still reads exactly the same.</div>';
+
+  const f = (inf.full && inf.full.found) ? inf.full.found : [];
+  if(f.length){
+    h += '<details style="margin-top:10px;" open><summary style="cursor:pointer;font-size:12.5px;">First questions as the app read them</summary><div style="margin-top:6px;">';
+    f.slice(0,3).forEach(q => {
+      h += '<div style="margin:8px 0;font-size:12px;line-height:1.5;"><b>Q' + labEsc(q.num) + '.</b> ' + labEsc(String(q.text).slice(0,220)) + '<br>'
+         + '<span class="muted">' + (q.options || []).map(o => '(' + labEsc(o.key) + ') ' + labEsc(String(o.text).slice(0,70))).join('  ') + '</span><br>'
+         + '<span style="color:var(--green);">Ans ' + labEsc(String(q.correctKey || '—')) + '</span>'
+         + (q.explanation ? ' <span class="muted">· ' + labEsc(String(q.explanation).slice(0,90)) + '…</span>' : '')
+         + '</div>';
+    });
+    h += '</div></details>';
+  }
+
+  const canPublish = v.verified && (!R.gate || !R.gate.length) && poolAdmin();
+  h += '<div class="row" style="justify-content:flex-start;gap:8px;margin-top:12px;flex-wrap:wrap;">'
+     + '<input type="text" id="labEntryName" class="tag-input" style="flex:1;min-width:180px;" placeholder="Name this book" value="' + labEsc(LAB.name) + '">'
+     + '<button class="secondary" onclick="labSaveLocal()">Save on this device</button>'
+     + '<button class="primary" onclick="labPublish()" ' + (canPublish ? '' : 'disabled') + '>Publish for everyone</button>'
+     + '</div>';
+  if(!poolAdmin()) h += '<p class="muted" style="font-size:11px;margin:6px 0 0;">Sign in with the admin Google account to publish.</p>';
+  else if(!v.verified) h += '<p class="muted" style="font-size:11px;margin:6px 0 0;">Only a layout that reads every question completely can be published, so a half-read book can never reach students.</p>';
+
+  h += '</div>';
+  st.innerHTML = h;
+}
+
+function labSaveLocal(){
+  const R = LAB.result; if(!R) return;
+  const name = ((document.getElementById('labEntryName') || {}).value || '').trim().slice(0,80) || LAB.name || 'Unnamed source';
+  const entry = {id:'g'+Date.now().toString(36), v:2, name:name, local:true,
+    fp:{sig:R.fp.sig, furn:R.fp.furn}, g:{q:R.inf.q, opt:R.inf.opt},
+    phrases:R.inf.phrases.slice(0,12), verify:R.v, pretty:GE_pretty(R.inf.q, R.inf.opt),
+    fixture:R.fixture, uses:1, ts:Date.now()};
+  GE_store.push(entry); GE_saveStore();
+  showToast('Saved on this device ✓','info');
+}
+
+async function labPublish(){
+  const R = LAB.result; if(!R) return;
+  if(!poolAdmin()){ showToast('Sign in with the admin Google account first.','error'); return; }
+  if(!R.v.verified){ showToast('Only a fully verified layout can be published.','error'); return; }
+  if(R.gate && R.gate.length){ showToast('It would break ' + R.gate.length + ' known layout(s).','error'); return; }
+  const name = ((document.getElementById('labEntryName') || {}).value || '').trim().slice(0,80) || LAB.name || 'Unnamed source';
+  try{
+    await firebase.firestore().collection('sourceGrammars').doc().set({
+      name:name, q:R.inf.q, opt:R.inf.opt, phrases:R.inf.phrases.slice(0,12),
+      fpSig:R.fp.sig.map(String), fpFurn:R.fp.furn,
+      fixtures:R.fixture ? [R.fixture] : [], verify:R.v, conf:R.v.conf, pretty:GE_pretty(R.inf.q, R.inf.opt),
+      uses:0, off:false, build:APP_BUILD, ts:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast('Published ✓ students get it on their next start.','info');
+    LAB.result = null; document.getElementById('labResult').innerHTML = '';
+    await labSync();
+  }catch(e){ showToast('Could not publish: ' + ((e && e.message) || e),'error'); }
+}
+
+function labTab(t){ LAB.tab = t; labRender(); }
+
+async function labSync(){
+  if(!poolAdmin()){ showToast('Sign in with the admin Google account first.','error'); return; }
+  const b = document.getElementById('labBody');
+  if(b) b.innerHTML = '<p class="muted">Loading…</p>';
+  try{
+    const fs = firebase.firestore();
+    const [s1, s2] = await Promise.all([
+      fs.collection('grammarSubs').orderBy('createdAt','desc').limit(100).get(),
+      fs.collection('sourceGrammars').orderBy('ts','desc').limit(200).get()
+    ]);
+    LAB.subs = []; s1.forEach(d => LAB.subs.push(Object.assign({id:d.id}, d.data())));
+    LAB.pub = []; s2.forEach(d => LAB.pub.push(Object.assign({id:d.id}, d.data())));
+    await GE_syncRemote();
+    try{ const q = document.getElementById('labQueueN'); if(q) q.textContent = LAB.subs.length; }catch(e){}
+    try{ const q = document.getElementById('libN'); if(q) q.textContent = LAB.pub.filter(p => !p.off).length; }catch(e){}
+  }catch(e){
+    if(b) b.innerHTML = '<p class="muted">Could not reach the library: ' + labEsc((e && e.message) || e) + '</p>';
+    return;
+  }
+  labRender();
+}
+
+function labRender(){
+  const b = document.getElementById('labBody'); if(!b) return;
+  if(!poolAdmin()){
+    b.innerHTML = '<div class="card"><p class="muted" style="margin:0;">Sign in with the admin Google account (Settings → Backup &amp; storage) to open the library.</p></div>';
+    return;
+  }
+  if(LAB.tab === 'queue') return labRenderQueue();
+  if(LAB.tab === 'library') return labRenderLibrary();
+  return labRenderRegress();
+}
+
+function labRenderQueue(){
+  const b = document.getElementById('labBody');
+  if(!LAB.subs.length){ b.innerHTML = '<div class="card"><p class="muted" style="margin:0;">Nothing waiting. When a student opens a book the app has never seen and reads it completely, its layout lands here for you to check.</p></div>'; return; }
+  let h = '';
+  LAB.subs.forEach((s, i) => {
+    const v = s.verify || {}, pr = s.pretty || {q:s.q||[], opt:s.opt||[]};
+    const pct = Math.round((s.conf || 0) * 100);
+    h += '<div class="card" style="margin:0 0 10px;">'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">'
+      + '<div style="min-width:0;flex:1;"><b>' + labEsc(s.name || '(no name)') + '</b>'
+      + '<div class="muted" style="font-size:11.5px;margin-top:2px;">' + v.n + ' questions · confidence ' + pct + '%'
+      + (v.gaps ? ' · ' + v.gaps + ' gaps' : '') + (v.rejected ? ' · ' + v.rejected + ' unread' : '')
+      + (s.fixture ? ' · test sample attached' : ' · no test sample') + '</div></div>'
+      + '<div style="font-size:18px;line-height:1;">' + (v.verified ? '✅' : '⚠️') + '</div></div>'
+      + '<div class="muted" style="font-size:11.5px;margin-top:4px;">Numbers: ' + labEsc((pr.q || []).join(' · ')) + '<br>Options: ' + labEsc((pr.opt || []).join(' · ')) + '</div>'
+      + '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:11.5px;">Check it before you publish</summary>'
+      + '<div style="margin-top:6px;"><button class="secondary" onclick="labTestSub(' + i + ')">Test it here</button>'
+      + '<div id="labTest' + i + '" class="muted" style="font-size:11.5px;margin-top:6px;line-height:1.6;"></div></div></details>'
+      + '<div class="row" style="justify-content:flex-start;gap:8px;margin-top:10px;flex-wrap:wrap;">'
+      + '<input type="text" id="labName' + i + '" class="tag-input" style="flex:1;min-width:150px;" placeholder="Book name" value="' + labEsc(s.name || '') + '">'
+      + '<button class="primary" onclick="labApprove(' + i + ')">Approve &amp; publish</button>'
+      + '<button class="secondary" onclick="labReject(' + i + ')">Reject</button></div>'
+      + '</div>';
+  });
+  b.innerHTML = h;
+}
+
+function labTestSub(i){
+  const s = LAB.subs[i]; if(!s) return;
+  const el = document.getElementById('labTest' + i); if(!el) return;
+  const fails = GE_gate({q:s.q || [], opt:s.opt || [], phrases:s.phrases || []});
+  let out = fails.length
+    ? '⛔ Would break: ' + fails.map(labEsc).join(', ')
+    : '✓ Every known layout still reads the same.';
+  if(s.fixture && s.fixture.text && s.fixture.sig){
+    let got = '';
+    try{ const saveA = GE_active; GE_setActive({q:s.q, opt:s.opt, phrases:s.phrases});
+         got = parseSig(parseSmart(s.fixture.text, '')); GE_setActive(saveA); }catch(e){ got = 'crashed: ' + ((e && e.message) || e); }
+    out += '<br>' + (got === s.fixture.sig
+      ? '✓ Its own sample still reads identically (' + (s.fixture.name || 'sample') + ').'
+      : '⛔ Its own sample no longer reads the same.');
+  }
+  el.innerHTML = out;
+}
+
+async function labApprove(i){
+  const s = LAB.subs[i]; if(!s) return;
+  const ni = document.getElementById('labName' + i);
+  const name = ((ni && ni.value) || s.name || '').trim().slice(0,80) || 'Unnamed source';
+  try{
+    const fs = firebase.firestore();
+    await fs.collection('sourceGrammars').doc().set({
+      name:name, q:s.q || [], opt:s.opt || [], phrases:s.phrases || [],
+      fpSig:s.fpSig || [], fpFurn:s.fpFurn || [],
+      fixtures:s.fixture ? [s.fixture] : [], verify:s.verify || null, conf:s.conf || 0,
+      pretty:s.pretty || null, uses:0, off:false, build:APP_BUILD,
+      ts:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    await fs.collection('grammarSubs').doc(s.id).delete();
+    showToast('Published ✓ students get it on their next start.','info');
+    await labSync();
+  }catch(e){ showToast('Could not publish: ' + ((e && e.message) || e),'error'); }
+}
+async function labReject(i){
+  const s = LAB.subs[i]; if(!s) return;
+  if(!confirm('Reject and delete this submission?')) return;
+  try{ await firebase.firestore().collection('grammarSubs').doc(s.id).delete(); showToast('Rejected.','info'); await labSync(); }
+  catch(e){ showToast('Could not delete: ' + ((e && e.message) || e),'error'); }
+}
+async function labRetract(i){
+  const p = LAB.pub[i]; if(!p) return;
+  if(!confirm('Take "' + (p.name || 'this book') + '" out of the library? Students stop using it on their next start.')) return;
+  try{ await firebase.firestore().collection('sourceGrammars').doc(p.id).update({off:true, ts:firebase.firestore.FieldValue.serverTimestamp()}); showToast('Removed.','info'); await labSync(); }
+  catch(e){ showToast('Could not remove: ' + ((e && e.message) || e),'error'); }
+}
+
+function labRenderLibrary(){
+  const b = document.getElementById('labBody');
+  const mine = GE_store.slice().sort((x,y) => (y.ts||0) - (x.ts||0));
+  const pub = LAB.pub || [];
+  let h = '';
+  h += '<div class="grp-h">Published — every student uses these</div>';
+  if(!pub.length) h += '<div class="card"><p class="muted" style="margin:0;">The library is empty. Analyse a PDF above and publish it.</p></div>';
+  pub.forEach((p, i) => {
+    const v = p.verify || {}, pr = p.pretty || {q:p.q||[], opt:p.opt||[]};
+    h += '<div class="card" style="margin:0 0 8px;display:flex;justify-content:space-between;gap:8px;align-items:flex-start;' + (p.off ? 'opacity:.55;' : '') + '">'
+      + '<div style="min-width:0;flex:1;"><b>' + labEsc(p.name || '(no name)') + '</b>' + (p.off ? ' <span class="muted">(removed)</span>' : '')
+      + '<div class="muted" style="font-size:11.5px;margin-top:2px;">' + (v.n||0) + ' questions · confidence ' + Math.round((p.conf||0)*100) + '%'
+      + ' · ' + ((p.fixtures && p.fixtures.length) || (p.fixture ? 1 : 0)) + ' test sample(s)</div>'
+      + '<div class="muted" style="font-size:11.5px;">' + labEsc((pr.q||[]).join(' · ')) + ' / ' + labEsc((pr.opt||[]).join(' · ')) + '</div></div>'
+      + (p.off ? '' : '<button class="secondary" onclick="labRetract(' + i + ')">Remove</button>')
+      + '</div>';
+  });
+  h += '<div class="grp-h" style="margin-top:14px;">Learned on this device</div>';
+  if(!mine.length) h += '<div class="card"><p class="muted" style="margin:0;">Nothing yet.</p></div>';
+  mine.forEach(g => {
+    const v = g.verify || {}, pr = g.pretty || {q:g.g.q, opt:g.g.opt};
+    h += '<div class="card" style="margin:0 0 8px;"><b>' + labEsc(g.name || '(no name)') + '</b>'
+      + '<div class="muted" style="font-size:11.5px;margin-top:2px;">' + (v.n||0) + ' questions · confidence ' + Math.round((v.conf||0)*100) + '%'
+      + ' · used ' + (g.uses||1) + '×' + (v.verified ? '' : ' · not verified, so never shared') + '</div>'
+      + '<div class="muted" style="font-size:11.5px;">' + labEsc((pr.q||[]).join(' · ')) + ' / ' + labEsc((pr.opt||[]).join(' · ')) + '</div></div>';
+  });
+  b.innerHTML = h;
+}
+
+async function labRegression(){
+  const b = document.getElementById('labBody');
+  b.innerHTML = '<p class="muted">Running every layout the app knows…</p>';
+  await new Promise(r => setTimeout(r, 40));
+  const out = [];
+  GE_setActive(null);
+  PARSER_TESTS.forEach(t => {
+    let ok = false, got = '';
+    try{
+      const f = parseSmart(t.text, t.sol || '');
+      const k = f.map(x => x.correctKey || '-').join('');
+      ok = f.length === t.count && k === t.keys;
+      got = f.length + ' found, answers ' + k;
+    }catch(e){ got = 'crashed: ' + ((e && e.message) || e); }
+    out.push({name:t.name, ok:ok, got:got, want:t.count + ' questions, answers ' + t.keys});
+  });
+  parseFixtures.forEach(f => {
+    let sig = '';
+    try{ GE_setActive(null); sig = parseSig(parseSmart(f.text, '')); }catch(e){ sig = 'crashed'; }
+    out.push({name:'Saved: ' + f.name, ok:sig === f.sig, got:sig.slice(0,36), want:String(f.sig).slice(0,36)});
+  });
+  let nfix = 0;
+  GE_remote.forEach(g => {
+    (g.fixtures || []).forEach(fx => {
+      if(!fx || !fx.text) return;
+      nfix++;
+      let sig = '';
+      try{ GE_setActive({q:g.g.q, opt:g.g.opt, phrases:g.phrases}); sig = parseSig(parseSmart(fx.text, '')); }catch(e){ sig = 'crashed'; }
+      out.push({name:(g.name || 'Published book') + ' — ' + (fx.name || 'sample'), ok:!!fx.sig && sig === fx.sig, got:sig.slice(0,36), want:String(fx.sig || '').slice(0,36)});
+    });
+  });
+  GE_setActive(null);
+  const bad = out.filter(x => !x.ok);
+  let h = '<div class="card"><div style="font-weight:700;font-size:14px;">'
+    + (bad.length ? '✗ ' + bad.length + ' of ' + out.length + ' failed' : '✓ all ' + out.length + ' layouts read correctly')
+    + '</div><div class="muted" style="font-size:11.5px;margin-top:2px;">'
+    + PARSER_TESTS.length + ' built-in · ' + parseFixtures.length + ' saved here · ' + nfix + ' from the library</div></div>';
+  out.forEach(x => {
+    h += '<div style="padding:7px 0;border-top:1px solid var(--border);font-size:12px;line-height:1.5;">'
+      + '<span style="color:' + (x.ok ? 'var(--green)' : 'var(--red)') + ';font-weight:700;">' + (x.ok ? '✓' : '✗') + '</span> '
+      + labEsc(x.name)
+      + (x.ok ? '' : '<div class="muted" style="padding-left:16px;">got ' + labEsc(x.got) + '<br>want ' + labEsc(x.want) + '</div>')
+      + '</div>';
+  });
+  b.innerHTML = h;
+}
+
+/* Show the lab row to the admin only. */
+const _ge_renderSettings = renderSettings;
+renderSettings = function(){
+  const r = _ge_renderSettings.apply(this, arguments);
+  try{
+    const on = poolAdmin();
+    const g = document.getElementById('labGrp'), b = document.getElementById('labRow');
+    if(g) g.style.display = on ? '' : 'none';
+    if(b) b.style.display = on ? '' : 'none';
+    const s = document.getElementById('labRowSub');
+    if(s) s.textContent = LAB.subs.length ? LAB.subs.length + ' submission(s) waiting' : 'Add a book / review what students sent';
+  }catch(e){}
+  return r;
+};
+
 </script>
 
 <script>

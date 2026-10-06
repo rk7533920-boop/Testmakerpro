@@ -1,0 +1,100 @@
+rules_version = '2';
+
+/* Test Maker — Firestore security rules
+   ---------------------------------------------------------------------------------
+   Deploy with:   firebase deploy --only firestore:rules
+   (Firebase console → Firestore Database → Rules also works: paste and Publish.)
+
+   These cover every collection the app touches. If you already have rules in place,
+   keep yours and add the two blocks marked NEW at the bottom — they are the only ones
+   the Parser lab needs.
+
+   The shape of it:
+     · Everything a student owns lives under users/{their own uid}/ and nobody else
+       can read or write it.
+     · The shared library (sourcePool, sourceGrammars) is readable by everyone and
+       writable by the admin account only.
+     · Anything a student contributes (sourceSubmissions, grammarSubs, bugReports)
+       can be created by them but only read or deleted by the admin.
+   --------------------------------------------------------------------------------- */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+    function isAdmin() {
+      return signedIn() && request.auth.token.email != null
+             && request.auth.token.email.lower() == "rk7533920@gmail.com";
+    }
+    /* Anonymous sign-in is used by students who never sign in with Google, so there is
+       no email to check. Anything admin-only must therefore also require a real account:
+       isAdmin() above already implies request.auth.token.email != null. */
+
+    /* ---- one student's own data -------------------------------------------------- */
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+      match /{document=**} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    /* ---- anonymous usage counters ------------------------------------------------ */
+    match /visitors/{id}      { allow read: if isAdmin(); allow write: if signedIn(); }
+    match /dailyActive/{id}   { allow read: if isAdmin(); allow write: if signedIn(); }
+
+    /* ---- problem reports: anyone may file one, only the admin reads them ---------- */
+    match /bugReports/{id} {
+      allow create: if signedIn();
+      allow read, delete: if isAdmin();
+      allow update: if false;
+    }
+
+    /* ---- duels ------------------------------------------------------------------- */
+    match /duels/{id}         { allow read: if signedIn(); allow create, update, delete: if signedIn(); }
+    match /duelHistory/{id}   { allow read: if signedIn(); allow create, update, delete: if signedIn(); }
+    match /duelReview/{id}    { allow read: if signedIn(); allow create, update, delete: if signedIn(); }
+    match /friendReqs/{id}    { allow read, create, update, delete: if signedIn(); }
+    match /friendships/{id}   { allow read, create, update, delete: if signedIn(); }
+
+    /* ---- shared source knowledge (the older header/footer pool) ------------------- */
+    match /sourcePool/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /sourceSubmissions/{id} {
+      allow create: if signedIn();
+      allow read, delete: if isAdmin();
+      allow update: if false;
+    }
+
+    /* ============================================================================
+       NEW — Parser lab
+       ============================================================================
+       sourceGrammars : the library of published book layouts. Readable by every
+                        signed-in device, writable only by the admin. This is what
+                        makes one student's upload help the next one.
+       grammarSubs    : layouts a student's app worked out and offered up. The device
+                        may create its own record and nothing else; only the admin can
+                        read the queue, approve (copy to sourceGrammars and delete) or
+                        reject (delete). Nothing here is ever served back to students
+                        until it is published, so an unapproved record cannot affect
+                        anyone's parsing.
+       ============================================================================ */
+    match /sourceGrammars/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+    match /grammarSubs/{id} {
+      /* the device names its document uid_gid, so it can only ever write its own */
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow read, delete: if isAdmin();
+      allow update: if false;
+    }
+
+    /* ---- everything else is closed ---------------------------------------------- */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
